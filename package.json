@@ -1,7 +1,8 @@
 {
   "name": "wireless-desc-converter",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "淘宝新版图文编辑器 wirelessDesc 适配工具 - HTML 富文本转换为结构化 JSON",
+  "type": "module",
   "main": "dist/wireless-desc-converter.umd.js",
   "module": "dist/wireless-desc-converter.esm.js",
   "files": [
@@ -13,7 +14,7 @@
     "build": "rollup -c",
     "build:watch": "rollup -c -w",
     "test": "echo \"TODO: add tests\" && exit 0",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "echo \"already built\""
   },
   "keywords": [
     "taobao",
@@ -24,8 +25,12 @@
     "ISV",
     "html-to-json"
   ],
-  "author": "",
+  "author": "chaorenzeng",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
   "devDependencies": {
     "rollup": "^2.79.1",
     "rollup-plugin-commonjs": "^10.1.0",

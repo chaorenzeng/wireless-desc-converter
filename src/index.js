@@ -77,17 +77,40 @@ function extractText(html) {
     .trim();
 }
 
+// CSS 关键字字号 → px 值映射（基于浏览器默认 16px 基准）
+var CSS_FONT_SIZE_KEYWORDS = {
+  'xx-small': '9',
+  'x-small': '10',
+  'small': '13',
+  'medium': '16',
+  'large': '18',
+  'x-large': '24',
+  'xx-large': '32',
+  'smaller': '13',
+  'larger': '19'
+};
+
 function extractStyles(html) {
   var styles = {};
-  var styleReg = /style\s*=\s*['"]([^'"]*)['"]/i;
-  var styleMatch = html.match(styleReg);
-  if (styleMatch) {
+  // 遍历所有 style= 属性，合并样式（后出现的覆盖先出现的）
+  var styleGlobalReg = /style\s*=\s*['"]([^'"]*)['"]/gi;
+  var styleMatch;
+  while ((styleMatch = styleGlobalReg.exec(html)) !== null) {
     var styleStr = styleMatch[1];
-    var colorMatch = styleStr.match(/color\s*:\s*([^;]+)/i);
+    var colorMatch = styleStr.match(/(?:^|[^-])color\s*:\s*([^;]+)/i);
     if (colorMatch) styles.color = colorMatch[1].trim();
     var fontSizeMatch = styleStr.match(/font-size\s*:\s*([^;]+)/i);
     if (fontSizeMatch) {
-      styles.fontSize = mapFontSize(parseInt(fontSizeMatch[1].trim().replace(/px/i, ''), 10));
+      var fontSizeValue = fontSizeMatch[1].trim().toLowerCase();
+      // 先尝试 CSS 关键字映射
+      if (CSS_FONT_SIZE_KEYWORDS[fontSizeValue]) {
+        styles.fontSize = CSS_FONT_SIZE_KEYWORDS[fontSizeValue];
+      } else {
+        var pxVal = parseInt(fontSizeValue.replace(/px/i, ''), 10);
+        if (!isNaN(pxVal)) {
+          styles.fontSize = mapFontSize(pxVal);
+        }
+      }
     }
     var alignMatch = styleStr.match(/text-align\s*:\s*([^;]+)/i);
     if (alignMatch) styles.textAlign = alignMatch[1].trim();
