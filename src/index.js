@@ -22,8 +22,8 @@ var IMAGE_MIN_WIDTH = 480;
 var IMAGE_MAX_WIDTH = 1500;
 var IMAGE_MAX_HEIGHT = 2000;
 
-// 文本行高倍率（与淘宝图文编辑器渲染一致）
-var LINE_HEIGHT_RATIO = 1.5;
+// 文本行高倍率（浏览器 CJK 默认 line-height ≈ 1.2）
+var LINE_HEIGHT_RATIO = 1.2;
 
 // 图片默认宽高比（4:3，电商详情页常见比例）
 var DEFAULT_IMAGE_ASPECT_RATIO = 0.75;
@@ -179,7 +179,7 @@ function parseHtmlSegments(html) {
  * 当未传 textImage 解析器时，需用此函数自动估算高度。
  *
  * 估算逻辑：
- *   1. lineHeight = fontSize × LINE_HEIGHT_RATIO (1.5)
+ *   1. lineHeight = fontSize × LINE_HEIGHT_RATIO (1.2)
  *   2. CJK 字符宽度 ≈ fontSize，ASCII 字符宽度 ≈ fontSize × 0.5
  *   3. 每行文本超过可用宽度时自动换行
  *   4. totalHeight = totalLines × lineHeight + top + bottom
