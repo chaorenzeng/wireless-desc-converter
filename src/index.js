@@ -22,6 +22,12 @@ var IMAGE_MIN_WIDTH = 480;
 var IMAGE_MAX_WIDTH = 1500;
 var IMAGE_MAX_HEIGHT = 2000;
 
+// 文本行高倍率（与淘宝图文编辑器渲染一致）
+var LINE_HEIGHT_RATIO = 1.5;
+
+// 图片默认宽高比（4:3，电商详情页常见比例）
+var DEFAULT_IMAGE_ASPECT_RATIO = 0.75;
+
 // ==================== 内部工具方法 ====================
 
 function generateGroupId() {
@@ -166,6 +172,243 @@ function parseHtmlSegments(html) {
   return segments;
 }
 
+/**
+ * 根据文本内容、字号、宽度估算渲染高度
+ *
+ * 淘宝图文编辑器要求 textStyle.height 不能为空，
+ * 当未传 textImage 解析器时，需用此函数自动估算高度。
+ *
+ * 估算逻辑：
+ *   1. lineHeight = fontSize × LINE_HEIGHT_RATIO (1.5)
+ *   2. CJK 字符宽度 ≈ fontSize，ASCII 字符宽度 ≈ fontSize × 0.5
+ *   3. 每行文本超过可用宽度时自动换行
+ *   4. totalHeight = totalLines × lineHeight + top + bottom
+ *
+ * @param {string} text - 文本内容（含换行符 \n）
+ * @param {string|number} fontSize - 字号（px 值）
+ * @param {string|number} width - 文本区域宽度
+ * @param {string|number} top - 上内边距
+ * @param {string|number} bottom - 下内边距
+ * @returns {string} 估算高度值（整数字符串）
+ */
+function estimateTextHeight(text, fontSize, width, top, bottom) {
+  if (!text) return '0';
+  fontSize = parseInt(fontSize, 10) || 14;
+  width = parseInt(width, 10) || MODULE_WIDTH;
+  top = parseInt(top, 10) || 10;
+  bottom = parseInt(bottom, 10) || 10;
+
+  var lineHeight = Math.round(fontSize * LINE_HEIGHT_RATIO);
+
+  // 拆分文本行（换行符分段）
+  var lines = text.split('\n');
+  var totalLines = 0;
+
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    if (!line) {
+      // 空行仍占一行高度
+      totalLines += 1;
+      continue;
+    }
+    // 估算该行文本的像素宽度
+    var lineWidthPx = 0;
+    for (var c = 0; c < line.length; c++) {
+      var ch = line.charCodeAt(c);
+      if (ch > 127) {
+        // CJK 及全角字符，宽度约等于 fontSize
+        lineWidthPx += fontSize;
+      } else {
+        // ASCII 及半角字符，宽度约为 fontSize 的一半
+        lineWidthPx += fontSize * 0.5;
+      }
+    }
+    // 换行数 = ceil(lineWidthPx / width)，至少 1 行
+    var wrappedLines = Math.max(1, Math.ceil(lineWidthPx / width));
+    totalLines += wrappedLines;
+  }
+
+  var height = totalLines * lineHeight + top + bottom;
+  return String(height);
+}
+
+/**
+ * 根据宽度估算图片高度
+ *
+ * 当无法异步获取图片真实尺寸时，用默认宽高比估算。
+ * 电商详情页图片常见比例为 4:3（高/宽 ≈ 0.75），
+ * 也可传入自定义宽高比。
+ *
+ * @param {string|number} width - 图片宽度（px）
+ * @param {number} [aspectRatio] - 高/宽比，默认 0.75
+ * @returns {string} 估算高度值（整数字符串）
+ */
+function estimateImageHeight(width, aspectRatio) {
+  width = parseInt(width, 10) || MODULE_WIDTH;
+  aspectRatio = aspectRatio || DEFAULT_IMAGE_ASPECT_RATIO;
+  var height = Math.round(width * aspectRatio);
+  // 确保不超过淘宝限制
+  if (height > IMAGE_MAX_HEIGHT) height = IMAGE_MAX_HEIGHT;
+  return String(height);
+}
+
+/**
+ * 遍历 wirelessDesc 结构，自动填充所有空值字段
+ *
+ * 扫描所有模块中的图片高度、文字高度、sample 高度等，
+ * 当值为空时用估算值自动填充，确保提交淘宝接口不报空值错误。
+ *
+ * @param {Object} wirelessDesc - wirelessDesc 结构化 JSON
+ * @param {Object} [options] - 配置选项
+ * @param {number} [options.imageAspectRatio] - 图片默认宽高比（高/宽）
+ * @returns {Object} 填充后的 wirelessDesc（原地修改）
+ */
+function fillEmptyValues(wirelessDesc, options) {
+  options = options || {};
+  var aspectRatio = options.imageAspectRatio || DEFAULT_IMAGE_ASPECT_RATIO;
+
+  if (!wirelessDesc || !wirelessDesc.value || !wirelessDesc.value.props) {
+    return wirelessDesc;
+  }
+
+  var props = wirelessDesc.value.props;
+  for (var i = 0; i < props.length; i++) {
+    var module = props[i];
+    if (module.type !== 'complex' || !module.value || !module.value.props) continue;
+    var moduleProps = module.value.props;
+    var moduleId = module.id || '';
+
+    // 遍历模块内所有字段
+    for (var j = 0; j < moduleProps.length; j++) {
+      var field = moduleProps[j];
+
+      // 处理 image 类型字段（图片模块中的 image 子对象）
+      if (field.id === 'image' && field.value && field.value.props) {
+        var imgProps = field.value.props;
+        var imgWidth = MODULE_WIDTH;
+        var imgHasHeight = false;
+        for (var k = 0; k < imgProps.length; k++) {
+          if (imgProps[k].id === 'width' && imgProps[k].value) {
+            imgWidth = parseInt(imgProps[k].value.value, 10) || MODULE_WIDTH;
+          }
+          if (imgProps[k].id === 'height') {
+            imgHasHeight = true;
+            if (!imgProps[k].value || !imgProps[k].value.value || imgProps[k].value.value === '') {
+              imgProps[k] = inputField('height', estimateImageHeight(imgWidth, aspectRatio));
+            }
+          }
+        }
+        // 如果没有 height 字段，补一个
+        if (!imgHasHeight) {
+          imgProps.push(inputField('height', estimateImageHeight(imgWidth, aspectRatio)));
+        }
+      }
+
+      // 处理 images 类型字段（文字模块中的多图）
+      if (field.id === 'images' && field.values) {
+        for (var m = 0; m < field.values.length; m++) {
+          var imgValues = field.values[m].props;
+          var mvWidth = MODULE_WIDTH;
+          var mvHasHeight = false;
+          for (var n = 0; n < imgValues.length; n++) {
+            if (imgValues[n].id === 'width' && imgValues[n].value) {
+              mvWidth = parseInt(imgValues[n].value.value, 10) || MODULE_WIDTH;
+            }
+            if (imgValues[n].id === 'height') {
+              mvHasHeight = true;
+              if (!imgValues[n].value || !imgValues[n].value.value || imgValues[n].value.value === '') {
+                imgValues[n] = inputField('height', estimateImageHeight(mvWidth, aspectRatio));
+              }
+            }
+          }
+          if (!mvHasHeight) {
+            imgValues.push(inputField('height', estimateImageHeight(mvWidth, aspectRatio)));
+          }
+        }
+      }
+
+      // 处理 sample 类型字段
+      if (field.id === 'sample' && field.values) {
+        for (var s = 0; s < field.values.length; s++) {
+          var sampleProps = field.values[s].props;
+          var sampleWidth = MODULE_WIDTH;
+          var sampleHasHeight = false;
+          for (var sp = 0; sp < sampleProps.length; sp++) {
+            if (sampleProps[sp].id === 'width' && sampleProps[sp].value) {
+              sampleWidth = parseInt(sampleProps[sp].value.value, 10) || MODULE_WIDTH;
+            }
+            if (sampleProps[sp].id === 'height') {
+              sampleHasHeight = true;
+              if (!sampleProps[sp].value || !sampleProps[sp].value.value || sampleProps[sp].value.value === '') {
+                sampleProps[sp] = inputField('height', estimateImageHeight(sampleWidth, aspectRatio));
+              }
+            }
+          }
+          if (!sampleHasHeight) {
+            sampleProps.push(inputField('height', estimateImageHeight(sampleWidth, aspectRatio)));
+          }
+        }
+      }
+
+      // 处理 textStyle 中的 height（文字模块）
+      if (field.id === 'textStyle' && field.value && field.value.props) {
+        var styleProps = field.value.props;
+        var tsText = '';
+        var tsFontSize = '14';
+        var tsWidth = MODULE_WIDTH;
+        var tsTop = '10';
+        var tsBottom = '10';
+        var tsHasHeight = false;
+        // 先收集其他样式值
+        for (var ts = 0; ts < styleProps.length; ts++) {
+          if (styleProps[ts].id === 'value' && styleProps[ts].value) tsText = styleProps[ts].value.value;
+          if (styleProps[ts].id === 'fontSize' && styleProps[ts].value) tsFontSize = styleProps[ts].value.value;
+          if (styleProps[ts].id === 'width' && styleProps[ts].value) tsWidth = styleProps[ts].value.value;
+          if (styleProps[ts].id === 'top' && styleProps[ts].value) tsTop = styleProps[ts].value.value;
+          if (styleProps[ts].id === 'bottom' && styleProps[ts].value) tsBottom = styleProps[ts].value.value;
+        }
+        // 再填充 height
+        for (var ts2 = 0; ts2 < styleProps.length; ts2++) {
+          if (styleProps[ts2].id === 'height') {
+            tsHasHeight = true;
+            if (!styleProps[ts2].value || !styleProps[ts2].value.value || styleProps[ts2].value.value === '') {
+              styleProps[ts2] = inputField('height', estimateTextHeight(tsText, tsFontSize, tsWidth, tsTop, tsBottom));
+            }
+          }
+        }
+        if (!tsHasHeight) {
+          styleProps.push(inputField('height', estimateTextHeight(tsText, tsFontSize, tsWidth, tsTop, tsBottom)));
+        }
+      }
+
+      // 处理 html 类型字段（richText 模块）
+      if (field.id === 'html' && field.value && field.value.props) {
+        var htmlProps = field.value.props;
+        var htmlHasWidth = false;
+        var htmlHasHeight = false;
+        for (var hp = 0; hp < htmlProps.length; hp++) {
+          if (htmlProps[hp].id === 'width') {
+            htmlHasWidth = true;
+            if (!htmlProps[hp].value || !htmlProps[hp].value.value || htmlProps[hp].value.value === '') {
+              htmlProps[hp] = inputField('width', MODULE_WIDTH);
+            }
+          }
+          if (htmlProps[hp].id === 'height') {
+            htmlHasHeight = true;
+            if (!htmlProps[hp].value || !htmlProps[hp].value.value || htmlProps[hp].value.value === '') {
+              htmlProps[hp] = inputField('height', estimateImageHeight(MODULE_WIDTH, aspectRatio));
+            }
+          }
+        }
+        if (!htmlHasWidth) htmlProps.push(inputField('width', MODULE_WIDTH));
+        if (!htmlHasHeight) htmlProps.push(inputField('height', estimateImageHeight(MODULE_WIDTH, aspectRatio)));
+      }
+    }
+  }
+
+  return wirelessDesc;
+}
+
 // ==================== 模块构造方法 ====================
 
 function buildVersionModule() {
@@ -213,6 +456,19 @@ function buildTextModule(params) {
     });
   }
 
+  // 当未传入显式 height 时，根据文本内容自动估算
+  // 淘宝接口要求 textStyle.height 不能为空
+  var textHeight = styles.height;
+  if (!textHeight) {
+    textHeight = estimateTextHeight(
+      text,
+      styles.fontSize || '14',
+      styles.width || MODULE_WIDTH,
+      styles.top || '10',
+      styles.bottom || '10'
+    );
+  }
+
   var textStyleProps = [
     singleCheckField('fontFamily', styles.fontFamily || 'ali-webfont'),
     inputField('color', styles.color || '#333333'),
@@ -224,7 +480,7 @@ function buildTextModule(params) {
     singleCheckField('fontSize', styles.fontSize || '14'),
     inputField('right', styles.right || '0'),
     inputField('value', text),
-    inputField('height', styles.height || '')
+    inputField('height', textHeight)
   ];
 
   return {
@@ -314,7 +570,11 @@ function buildRichTextModule(params) {
 
 function updateTextImages(textModule, images) {
   var imageValues = [];
+  // 合图总高度，用于更新 textStyle.height
+  var totalImageHeight = 0;
   for (var k = 0; k < images.length; k++) {
+    var imgH = parseInt(images[k].height, 10) || 0;
+    totalImageHeight += imgH;
     imageValues.push({
       props: [
         inputField('width', images[k].width || MODULE_WIDTH),
@@ -330,6 +590,22 @@ function updateTextImages(textModule, images) {
       moduleProps[p].values = [{
         props: [inputField('width'), inputField('url', images[0].url || ''), inputField('height')]
       }];
+    }
+    // 合图完成后，用合图总高度更新 textStyle.height
+    if (moduleProps[p].id === 'textStyle' && moduleProps[p].value && moduleProps[p].value.props && totalImageHeight > 0) {
+      var styleProps = moduleProps[p].value.props;
+      for (var sp = 0; sp < styleProps.length; sp++) {
+        if (styleProps[sp].id === 'height') {
+          // 合图高度 + top + bottom padding
+          var topVal = 10;
+          var bottomVal = 10;
+          for (var tp = 0; tp < styleProps.length; tp++) {
+            if (styleProps[tp].id === 'top' && styleProps[tp].value) topVal = parseInt(styleProps[tp].value.value, 10) || 10;
+            if (styleProps[tp].id === 'bottom' && styleProps[tp].value) bottomVal = parseInt(styleProps[tp].value.value, 10) || 10;
+          }
+          styleProps[sp] = inputField('height', String(totalImageHeight + topVal + bottomVal));
+        }
+      }
     }
   }
 }
@@ -382,6 +658,7 @@ function updateImageSize(imageModule, size) {
  *   参数: { url } 返回 Promise<{ width, height }>
  * @param {Function} [options.textImage] - 文字合图函数
  *   参数: { text, styles, index } 返回 Promise<Array<{ url, width, height }>>
+ * @param {number} [options.imageAspectRatio=0.75] - 图片默认宽高比（高/宽），用于无尺寸信息时估算
  * @returns {Promise<Object>} wirelessDesc 结构化 JSON
  *
  * @example
@@ -511,6 +788,11 @@ async function htmlToWirelessDesc(html, options) {
     }
   }
 
+  // 自动填充所有空值字段，确保提交淘宝接口不报空值错误
+  fillEmptyValues(wirelessDesc, {
+    imageAspectRatio: options.imageAspectRatio || DEFAULT_IMAGE_ASPECT_RATIO
+  });
+
   return wirelessDesc;
 }
 
@@ -560,9 +842,11 @@ export {
   htmlToWirelessDesc,
 
   // 辅助方法
+  // 辅助方法
   buildEmptyWirelessDesc,
   validateHeight,
   serializeWirelessDesc,
+  fillEmptyValues,
 
   // 模块构造
   buildTextModule,
@@ -578,6 +862,8 @@ export {
   parseHtmlSegments,
   mapFontSize,
   mapHeadingSize,
+  estimateTextHeight,
+  estimateImageHeight,
 
   // 常量
   MODULE_WIDTH,
@@ -586,5 +872,7 @@ export {
   VERSION,
   IMAGE_MIN_WIDTH,
   IMAGE_MAX_WIDTH,
-  IMAGE_MAX_HEIGHT
+  IMAGE_MAX_HEIGHT,
+  LINE_HEIGHT_RATIO,
+  DEFAULT_IMAGE_ASPECT_RATIO
 };
