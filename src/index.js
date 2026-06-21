@@ -449,13 +449,7 @@ function buildTextModule(params) {
     });
   }
 
-  var sampleValues = [];
-  if (images.length > 0) {
-    sampleValues.push({
-      props: [inputField('width'), inputField('url', images[0].url || ''), inputField('height')]
-    });
-  }
-
+  // sample（示意图）字段为可选，不传不报错，不生成可减少不必要字段
   // 当未传入显式 height 时，根据文本内容自动估算
   // 淘宝接口要求 textStyle.height 不能为空
   var textHeight = styles.height;
@@ -491,8 +485,8 @@ function buildTextModule(params) {
         singleCheckField('enable', 'true'),
         singleCheckField('countHeight', 'false'),
         inputField('id', groupId),
-        { id: 'textStyle', type: 'complex', value: { props: textStyleProps } },
-        { id: 'sample', type: 'multiComplex', values: sampleValues }
+        { id: 'textStyle', type: 'complex', value: { props: textStyleProps } }
+        // sample（示意图）不传：官方文档确认为可选字段，缺省不报错
       ]
     }
   };
@@ -691,9 +685,15 @@ async function htmlToWirelessDesc(html, options) {
     }
   }
 
+  // 只有在传入 textImage 合图函数时才生成 text 模块。
+  // 淘宝接口要求 text_N.images 不能为空，若无合图能力则跳过文字模块，
+  // 避免提交时报 "text_N.images值不能为空" 错误。
+  var hasTextResolver = typeof options.textImage === 'function';
+
   for (var i = 0; i < segments.length; i++) {
     var seg = segments[i];
     if (seg.type === 'text') {
+      if (!hasTextResolver) continue; // 无合图能力，跳过文字模块
       textCounter++;
       props.push(buildTextModule({ text: seg.content, styles: seg.styles, index: textCounter }));
     } else if (seg.type === 'image') {
@@ -712,7 +712,6 @@ async function htmlToWirelessDesc(html, options) {
 
   // 异步补全：图片尺寸 & 文字合图
   var hasImageResolver = typeof options.imageSize === 'function';
-  var hasTextResolver = typeof options.textImage === 'function';
 
   if (hasImageResolver || hasTextResolver) {
     var tasks = [];
@@ -748,8 +747,17 @@ async function htmlToWirelessDesc(html, options) {
               var images = await options.textImage({ text: text, styles: st, index: idx });
               if (Array.isArray(images) && images.length) {
                 updateTextImages(mod, images);
+              } else {
+                // 合图失败或返回空数组 → 将该 text_N 模块从 props 中整体移除
+                // 淘宝要求 images 字段必须有实际数据（字段缺失/空数组均报错）
+                // 无法合图时唯一合法的处理是不提交该模块
+                var removeIdx = props.indexOf(mod);
+                if (removeIdx !== -1) props.splice(removeIdx, 1);
               }
-            } catch (e) {}
+            } catch (e) {
+              var removeIdx = props.indexOf(mod);
+              if (removeIdx !== -1) props.splice(removeIdx, 1);
+            }
           })(module, textValue, styles, moduleIndex));
         }
       }
