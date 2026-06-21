@@ -1,14 +1,14 @@
 # 实战集成指南
 
-本文档基于 `fe-upload-tb` 项目的真实上线经验，展示如何在淘宝商品一键上传场景中集成 `wireless-desc-converter`，重点介绍 **文字合图解析器** 和 **图片尺寸解析器** 的实现。
+本文档基于真实上线经验，展示如何在淘宝商品一键上传场景中集成 `wireless-desc-converter`，重点介绍 **文字合图解析器** 和 **图片尺寸解析器** 的实现。
 
 ---
 
 ## 目录
 
 - [整体流程](#整体流程)
-- [图片尺寸解析器 createImageSizeResolver](#图片尺寸解析器-createimagesizeresolver)
-- [文字合图解析器 createTextImageResolver](#文字合图解析器-createtextimageresolver)
+- [图片尺寸解析器](#图片尺寸解析器)
+- [文字合图解析器](#文字合图解析器)
 - [提交入口集成](#提交入口集成)
 - [淘宝图片空间上传接口](#淘宝图片空间上传接口)
 - [关键约束与避坑](#关键约束与避坑)
@@ -27,7 +27,7 @@ htmlToWirelessDesc(html, {
 })
        |
        v
-wirelessDesc JSON  ──>  /api/publish/add 提交
+wirelessDesc JSON  ──>  你的商品发布接口提交
 ```
 
 核心思路：`htmlToWirelessDesc` 负责解析 HTML 生成结构化 JSON，但有两件事需要宿主项目协助：
@@ -37,7 +37,7 @@ wirelessDesc JSON  ──>  /api/publish/add 提交
 
 ---
 
-## 图片尺寸解析器 createImageSizeResolver
+## 图片尺寸解析器
 
 ### 职责
 
@@ -46,11 +46,11 @@ wirelessDesc JSON  ──>  /api/publish/add 提交
 ### 解析优先级（三级降级）
 
 ```
-1. window.imgs_move_res（图片搬家结果）  ── 同步，最快
+1. 图片搬家结果（如项目中有）  ── 同步，最快
        ↓ 未命中
-2. loadImg 加载图片获取真实尺寸            ── 异步，准确
+2. loadImg 加载图片获取真实尺寸    ── 异步，准确
        ↓ 失败
-3. 返回 null                              ── 由 fillEmptyValues 兜底估算
+3. 返回 null                      ── 由 fillEmptyValues 兜底估算
 ```
 
 ### 完整实现
@@ -62,7 +62,9 @@ wirelessDesc JSON  ──>  /api/publish/add 提交
  * @returns {Function} async resolver ({ url }) => Promise<{ width, height } | null>
  */
 export function createImageSizeResolver() {
-  var moveResults = getImageMoveResult(); // 从 window.imgs_move_res 读取
+  // 从你的项目中获取图片搬家结果（如有），格式为 [{ pic_old, pic_new, pic_pixel }]
+  // pic_pixel 格式如 "750x950"，包含搬家后图片的真实宽高
+  var moveResults = getMoveResults(); // ← 替换为你项目的搬家结果获取逻辑
 
   return async function({ url }) {
     if (!url) return null;
@@ -85,9 +87,9 @@ export function createImageSizeResolver() {
       }
     }
 
-    // 2. 通过 loadImg 异步加载获取真实尺寸
+    // 2. 通过 new Image() 异步加载获取真实尺寸
     try {
-      var imgData = await loadImg(url);
+      var imgData = await loadImg(url); // ← 替换为你项目的图片加载方法
       if (imgData && !imgData.hasError && imgData.width > 1 && imgData.height > 1) {
         return { width: imgData.width, height: imgData.height };
       }
@@ -109,7 +111,7 @@ export function createImageSizeResolver() {
 
 ---
 
-## 文字合图解析器 createTextImageResolver
+## 文字合图解析器
 
 ### 职责
 
@@ -223,27 +225,28 @@ export function createTextImageResolver(uploaderOptions) {
 
     // --- 第四步：上传到淘宝图片空间 ---
     try {
-      var { pathUploadBase64 } = getImageUploadApiPath();
-      var gid = window.GOOD_ID || (window.zwd_data && window.zwd_data.gid) || '';
-      var zdid = (window.zwd_data && window.zwd_data.zdid) || '';
-      var title = gid + '_' + zdid + '_描述文字_' + (index || 1);
+      // 替换为你项目的上传接口路径
+      var uploadUrl = getUploadUrl(); // ← 你的图片空间上传接口
+      var gid = getGoodsId();         // ← 商品 ID
+      var title = gid + '_描述文字_' + (index || 1);
 
-      var uploadRes = await fetch(pathUploadBase64, {
+      var uploadRes = await fetch(uploadUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json; charset=UTF-8' },
         body: JSON.stringify({
           cid: uploaderOptions.cid || 0,       // 相册 id
-          title: title,                        // 图片标题（命名规则与主图/属性图统一）
+          title: title,                        // 图片标题
           img: base64,                         // base64 图片数据
           gid: gid,                            // 商品 id
-          item_no: (window.zwd_data && window.zwd_data.item_no) || '',
-          createCategoryForGoods: getAutoCreateFolderOrNot(), // 是否自动创建商品图片文件夹
+          item_no: getItemNo(),                // 商品编号（如有）
+          createCategoryForGoods: true,        // 是否自动创建商品图片文件夹（幂等，重复传不会报错）
         }),
         credentials: 'include',
       });
 
       if (uploadRes.ok) {
         var res = await uploadRes.json();
+        // 替换为你项目接口的实际响应字段
         if (res && res.is_success && res.result && res.result.picture) {
           var picUrl = res.result.picture.picture_path;
           if (picUrl) {
@@ -252,7 +255,7 @@ export function createTextImageResolver(uploaderOptions) {
         }
       }
     } catch (e) {
-      console.log('---> createTextImageResolver: upload failed', e);
+      console.log('createTextImageResolver: upload failed', e);
     }
 
     failCount++;
@@ -279,29 +282,30 @@ export function createTextImageResolver(uploaderOptions) {
 
 ## 提交入口集成
 
-以下是 `fe-upload-tb` 中 `UploadBtn/index.js` 的真实集成代码：
+以下是提交组件中的参考集成代码：
 
 ```javascript
 import {
   createImageSizeResolver,
   createTextImageResolver,
   htmlToWirelessDesc,
-  isWirelessDescUser,
-} from '../../../util';
+} from 'wireless-desc-converter';
 
 // 在提交方法中：
 async submitData() {
   // ... 前置处理 ...
 
   let descField = {};
-  if (isWirelessDescUser()) {
+
+  // 判断是否使用新版编辑器（你的项目自行实现判断逻辑）
+  if (isNewEditorUser()) {
     // 1. 创建文字合图解析器（传入相册 id）
     const textImageHandle = createTextImageResolver({
-      cid: (this.props.goods.album || {}).id || 0
+      cid: getAlbumId() // ← 淘宝图片空间相册 id
     });
 
     // 2. 调用 htmlToWirelessDesc，同时传入两个解析器
-    const wirelessDesc = await this.buildWirelessDesc(html, {
+    const wirelessDesc = await htmlToWirelessDesc(html, {
       imageSize: createImageSizeResolver(),
       textImage: textImageHandle.resolver,
     });
@@ -309,14 +313,10 @@ async submitData() {
     // 3. 检查合图失败数量，弹窗询问用户是否继续
     const textFailCount = textImageHandle.getFailCount();
     if (textFailCount > 0) {
-      const confirmed = await new Promise(function(resolve) {
-        Confirm.open(
-          '文字合图失败',
-          textFailCount + ' 段文字内容合图失败，这些段落将不会显示在商品详情中。是否继续上传？',
-          function() { resolve(true); },
-          function() { resolve(false); }
-        );
-      });
+      const confirmed = await showConfirmDialog(
+        '文字合图失败',
+        textFailCount + ' 段文字内容合图失败，这些段落将不会显示在商品详情中。是否继续上传？'
+      );
       if (!confirmed) {
         this.setState({ loading: false });
         return; // 用户取消，中止提交
@@ -329,13 +329,13 @@ async submitData() {
     descField = { desc: html };
   }
 
-  // 4. 构建 submitData 并提交
+  // 4. 构建提交数据并调用你的发布接口
   const submitData = {
     // ... 其他字段 ...
     ...descField,
   };
 
-  // HTTPUtil.post('/api/publish/add', submitData)
+  // await postToPublishApi(submitData);
 }
 ```
 
@@ -360,20 +360,20 @@ wireless-desc-converter: 将该 text_N 模块整体从 props 移除
 
 ## 淘宝图片空间上传接口
 
-文字合图最终需要上传到淘宝图片空间，接口参数如下：
+文字合图最终需要上传到淘宝图片空间，接口参数参考如下：
 
 ### 请求参数
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| `cid` | `string\|number` | 相册 ID（从 `album.id` 获取） |
-| `title` | `string` | 图片标题，建议格式：`{gid}_{zdid}_描述文字_{index}` |
+| `cid` | `string\|number` | 相册 ID |
+| `title` | `string` | 图片标题，建议格式：`{商品ID}_描述文字_{index}` |
 | `img` | `string` | base64 图片数据（`data:image/jpeg;base64,...`） |
 | `gid` | `string` | 商品 ID |
-| `item_no` | `string` | 商品编号 |
+| `item_no` | `string` | 商品编号（如有） |
 | `createCategoryForGoods` | `boolean` | 是否自动创建商品图片文件夹（幂等，重复传不会报错） |
 
-### 响应结构
+### 响应结构（参考）
 
 ```json
 {
@@ -386,20 +386,7 @@ wireless-desc-converter: 将该 text_N 模块整体从 props 移除
 }
 ```
 
-### 接口版本选择
-
-淘宝图片空间有新版（v3）和旧版两套接口，通过 `getImageUploadApiPath()` 统一管理：
-
-```javascript
-function getImageUploadApiPath() {
-  const useNewApi = checkUseNewImageUploadApi(); // 根据 api_version >= 3 判断
-  return {
-    pathUploadBase64: useNewApi ? UPLOAD_IMAGE_V3 : UPLOAD_IMAGE,
-    pathUploadFile:   useNewApi ? UPLOAD_FILE_V3   : UPLOAD_FILE,
-    pathGetBase64:    useNewApi ? GET_IMAGE_BASE64_V3 : GET_IMAGE_BASE64,
-  };
-}
-```
+> 具体接口路径和响应字段请根据你项目使用的淘宝图片空间 API 版本（新版 v3 / 旧版）自行适配。
 
 ---
 
@@ -420,7 +407,7 @@ function getImageUploadApiPath() {
 
 ### 3. `sample` 字段
 
-`text_N` 和 `image_hot_area_N` 的 `sample`（示意图）字段均为**可选**，不传不会报错。`fe-upload-tb` 的实现中 `text_N` 不生成 `sample`。
+`text_N` 和 `image_hot_area_N` 的 `sample`（示意图）字段均为**可选**，不传不会报错。
 
 ### 4. `text_N.images` 强必填
 
@@ -430,12 +417,12 @@ function getImageUploadApiPath() {
 
 ### 5. 循环依赖规避
 
-如果宿主项目的工具方法存在循环依赖（如 `image.js` → `HTTPUtil` → `index.js` → `image.js`），文字合图上传应**直接用原生 `fetch`**，不要通过封装的 HTTP 工具类。
+如果宿主项目的工具方法存在循环依赖（如 `image.js` → HTTP 工具 → `index.js` → `image.js`），文字合图上传应**直接用原生 `fetch`**，不要通过封装的 HTTP 工具类。
 
 ### 6. Canvas 限制
 
 - Canvas 不支持加载 web font，只能用系统字体渲染
-- IE8 不支持 Canvas，需确保 `isWirelessDescUser()` 在 IE8 环境返回 `false`
+- IE8 不支持 Canvas，需确保新版编辑器判断函数在 IE8 环境返回 `false`
 - `canvas.toDataURL` 在某些跨域场景会抛异常，需 try-catch
 
 ### 7. 图片尺寸约束
