@@ -174,3 +174,7 @@ wirelessDesc.value.props.unshift(imageModule, textModule);
 ## License
 
 MIT
+
+## 更多文档
+
+- [实战集成指南](./docs/integration-guide.md) — 基于 fe-upload-tb 项目的真实上线经验，包含文字合图解析器、图片尺寸解析器的完整实现和避坑要点
