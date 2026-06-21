@@ -484,7 +484,6 @@ function buildTextModule(params) {
         { id: 'images', type: 'multiComplex', values: imageValues },
         singleCheckField('enable', 'true'),
         singleCheckField('countHeight', 'false'),
-        inputField('id', groupId),
         { id: 'textStyle', type: 'complex', value: { props: textStyleProps } }
         // sample（示意图）不传：官方文档确认为可选字段，缺省不报错
       ]
@@ -532,7 +531,6 @@ function buildImageModule(params) {
         singleCheckField('enable', 'true'),
         singleCheckField('countHeight', 'true'),
         { id: 'hot_area', type: 'multiComplex', values: hotAreaValues },
-        inputField('id', groupId),
         { id: 'sample', type: 'multiComplex', values: sampleValues }
       ]
     }
@@ -550,7 +548,6 @@ function buildRichTextModule(params) {
       props: [
         singleCheckField('enable', 'false'),
         singleCheckField('countHeight', 'false'),
-        inputField('id', groupId),
         { id: 'html', type: 'complex', value: {
           props: [inputField('text', params.html || ''), inputField('width', ''), inputField('height', '')]
         }},
