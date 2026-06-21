@@ -1,6 +1,6 @@
 {
   "name": "wireless-desc-converter",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "淘宝新版图文编辑器 wirelessDesc 适配工具 - HTML 富文本转换为结构化 JSON",
   "type": "module",
   "main": "dist/wireless-desc-converter.umd.js",
@@ -29,7 +29,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": ""
+    "url": "https://github.com/chaorenzeng/wireless-desc-converter.git"
+  },
+  "homepage": "https://github.com/chaorenzeng/wireless-desc-converter#readme",
+  "bugs": {
+    "url": "https://github.com/chaorenzeng/wireless-desc-converter/issues"
   },
   "devDependencies": {
     "rollup": "^2.79.1",
