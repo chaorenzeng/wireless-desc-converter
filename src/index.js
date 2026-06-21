@@ -675,8 +675,8 @@ async function htmlToWirelessDesc(html, options) {
   }
 
   var segments = parseHtmlSegments(html);
-  var textCounter = 0;
-  var imageCounter = 0;
+  var textCounter = 1;   // text_N 从 1 开始（淘宝示例：text_1）
+  var imageCounter = 0;  // image_hot_area_N 从 0 开始（淘宝示例：image_hot_area_0）
   var props = [];
 
   if (options.existingModules && options.existingModules.length) {
@@ -694,11 +694,11 @@ async function htmlToWirelessDesc(html, options) {
     var seg = segments[i];
     if (seg.type === 'text') {
       if (!hasTextResolver) continue; // 无合图能力，跳过文字模块
-      textCounter++;
       props.push(buildTextModule({ text: seg.content, styles: seg.styles, index: textCounter }));
+      textCounter++;
     } else if (seg.type === 'image') {
-      imageCounter++;
       props.push(buildImageModule({ url: seg.url, width: MODULE_WIDTH, height: '', index: imageCounter }));
+      imageCounter++;
     }
   }
 
