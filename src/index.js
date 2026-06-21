@@ -484,9 +484,9 @@ function buildTextModule(params) {
         { id: 'images', type: 'multiComplex', values: imageValues },
         singleCheckField('enable', 'true'),
         singleCheckField('countHeight', 'false'),
+        inputField('id', groupId),
         { id: 'textStyle', type: 'complex', value: { props: textStyleProps } }
         // sample（示意图）不传：官方文档确认为可选字段，缺省不报错
-        // id 字段（groupId）不传：淘宝接口标记为只读字段，提交时不可携带
       ]
     }
   };
@@ -532,8 +532,8 @@ function buildImageModule(params) {
         singleCheckField('enable', 'true'),
         singleCheckField('countHeight', 'true'),
         { id: 'hot_area', type: 'multiComplex', values: hotAreaValues },
+        inputField('id', groupId),
         { id: 'sample', type: 'multiComplex', values: sampleValues }
-        // id 字段（groupId）不传：淘宝接口标记为只读字段，提交时不可携带
       ]
     }
   };
@@ -550,11 +550,11 @@ function buildRichTextModule(params) {
       props: [
         singleCheckField('enable', 'false'),
         singleCheckField('countHeight', 'false'),
+        inputField('id', groupId),
         { id: 'html', type: 'complex', value: {
           props: [inputField('text', params.html || ''), inputField('width', ''), inputField('height', '')]
         }},
         { id: 'sample', type: 'multiComplex', values: [] }
-        // id 字段（groupId）不传：淘宝接口标记为只读字段，提交时不可携带
       ]
     }
   };
