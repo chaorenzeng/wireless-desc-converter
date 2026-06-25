@@ -847,7 +847,6 @@ export {
   htmlToWirelessDesc,
 
   // 辅助方法
-  // 辅助方法
   buildEmptyWirelessDesc,
   validateHeight,
   serializeWirelessDesc,
