@@ -840,6 +840,275 @@ function serializeWirelessDesc(wirelessDesc) {
   return JSON.stringify(wirelessDesc);
 }
 
+// ==================== 内置解析器 ====================
+
+/**
+ * 加载图片并获取真实尺寸
+ *
+ * 浏览器环境工具，创建 Image 对象异步加载图片，返回真实宽高。
+ * 非浏览器环境（如 Node.js）不可用。
+ *
+ * @param {string} url - 图片地址
+ * @returns {Promise<{ hasError: boolean, width: number, height: number, url: string }>}
+ *
+ * @example
+ * var imgData = await loadImg('https://img.alicdn.com/xxx.jpg');
+ * if (!imgData.hasError) {
+ *   console.log(imgData.width, imgData.height);
+ * }
+ */
+function loadImg(url) {
+  return new Promise(function(resolve) {
+    if (!url) {
+      resolve({ hasError: true, url: url });
+      return;
+    }
+    var img = new Image();
+    img.onload = function() {
+      resolve({
+        hasError: !!(img.width === 1 && img.height === 1),
+        width: img.width,
+        height: img.height,
+        url: url
+      });
+    };
+    img.onerror = function() {
+      resolve({ hasError: true, width: img.width, height: img.height, url: url });
+    };
+    img.src = url;
+  });
+}
+
+/**
+ * 创建图片尺寸解析器
+ *
+ * 供 htmlToWirelessDesc 的 imageSize 选项使用。
+ * 三级降级策略：缓存命中 → loadImg 异步加载 → 返回 null 交由估算兜底。
+ *
+ * @param {Array} [cache] - 缓存数组，每项 { url, width, height }
+ * @returns {Function} async resolver: ({ url }) => Promise<{ width, height } | null>
+ *
+ * @example
+ * import { htmlToWirelessDesc, createImageSizeResolver } from 'wireless-desc-converter';
+ *
+ * // cache 可以是图片搬家接口返回的尺寸信息，格式: [{ url, width, height }, ...]
+ * var imageSizeResolver = createImageSizeResolver(imageMoveResults);
+ * var desc = await htmlToWirelessDesc(html, { imageSize: imageSizeResolver });
+ */
+function createImageSizeResolver(cache) {
+  cache = cache || [];
+
+  return async function(param) {
+    var url = param && param.url;
+    if (!url) return null;
+
+    // 1. 从缓存中查找匹配
+    for (var i = 0; i < cache.length; i++) {
+      var item = cache[i];
+      if (item.url && url.indexOf(item.url) === 0 && item.width > 0 && item.height > 0) {
+        return { width: item.width, height: item.height };
+      }
+    }
+
+    // 2. 通过 loadImg 异步加载获取真实尺寸
+    try {
+      var imgData = await loadImg(url);
+      if (imgData && !imgData.hasError && imgData.width > 1 && imgData.height > 1) {
+        return { width: imgData.width, height: imgData.height };
+      }
+    } catch (e) {}
+
+    // 3. 返回 null，由 fillEmptyValues 兜底估算
+    return null;
+  };
+}
+
+// 默认上传响应解析器：尝试常见的返回结构
+function defaultParseUploadResponse(res) {
+  if (!res) return '';
+  // 淘宝图片空间常见结构
+  if (res.result && res.result.picture && res.result.picture.picture_path) {
+    return res.result.picture.picture_path;
+  }
+  // 通用结构
+  if (res.result && res.result.url) return res.result.url;
+  return res.url || '';
+}
+
+/**
+ * 创建文字合图解析器
+ *
+ * 供 htmlToWirelessDesc 的 textImage 选项使用。
+ * 用 Canvas 将文字渲染成图片 → 导出 base64 → 上传到图片空间。
+ * 需要浏览器环境（Canvas + fetch）。
+ *
+ * @param {Object} options - 配置
+ * @param {string} options.uploadUrl - 图片上传接口地址
+ * @param {Object} [options.extraParams] - 上传额外参数（如相册 id 等）
+ * @param {Function} [options.parseResponse] - 自定义响应解析，参数 (res)，返回图片 URL
+ * @param {number} [options.canvasWidth=620] - 画布宽度（默认 MODULE_WIDTH）
+ * @param {number} [options.paddingTop=10] - 上内边距
+ * @param {number} [options.paddingBottom=10] - 下内边距
+ * @param {number} [options.paddingLeft=20] - 左内边距
+ * @param {number} [options.paddingRight=20] - 右内边距
+ * @param {number} [options.lineHeightRatio=1.5] - 行高倍率
+ * @param {number} [options.maxHeight=2000] - 单张图片最大高度
+ * @param {string} [options.fontFamily='sans-serif'] - 字体
+ * @param {number} [options.quality=0.9] - JPEG 导出质量
+ * @returns {{ resolver: Function, getFailCount: Function }}
+ *   - resolver: async ({ text, styles, index }) => Promise<Array<{ url, width, height }>>
+ *   - getFailCount: () => number，返回合图失败的文字段数量
+ *
+ * @example
+ * import { htmlToWirelessDesc, createTextImageResolver } from 'wireless-desc-converter';
+ *
+ * var helper = createTextImageResolver({
+ *   uploadUrl: '/api/upload-base64',
+ *   extraParams: { cid: albumId },
+ *   parseResponse: function(res) { return res.data.url; }  // 自定义解析
+ * });
+ * var desc = await htmlToWirelessDesc(html, {
+ *   textImage: helper.resolver,
+ *   imageAspectRatio: 0.75
+ * });
+ * if (helper.getFailCount() > 0) {
+ *   console.warn(helper.getFailCount() + ' 个文字段合图失败，已自动跳过');
+ * }
+ */
+function createTextImageResolver(options) {
+  options = options || {};
+  var failCount = 0;
+  var uploadUrl = options.uploadUrl || '';
+  var extraParams = options.extraParams || {};
+  var parseResponse = typeof options.parseResponse === 'function'
+    ? options.parseResponse
+    : defaultParseUploadResponse;
+  var canvasWidth = options.canvasWidth || MODULE_WIDTH;
+  var paddingTop = options.paddingTop != null ? options.paddingTop : 10;
+  var paddingBottom = options.paddingBottom != null ? options.paddingBottom : 10;
+  var paddingLeft = options.paddingLeft != null ? options.paddingLeft : 20;
+  var paddingRight = options.paddingRight != null ? options.paddingRight : 20;
+  var lineHeightRatio = options.lineHeightRatio || 1.5;
+  var maxHeight = options.maxHeight || IMAGE_MAX_HEIGHT;
+  var fontFamily = options.fontFamily || 'sans-serif';
+  var quality = options.quality || 0.9;
+
+  var resolver = async function(param) {
+    var text = param && param.text;
+    var styles = (param && param.styles) || {};
+    var index = (param && param.index) || 1;
+
+    if (!text) return [];
+
+    var fontSize = parseInt(styles.fontSize, 10) || 14;
+    var color = styles.color || '#333333';
+    var textAlign = styles.textAlign || 'left';
+    var lineHeight = Math.round(fontSize * lineHeightRatio);
+    var usableWidth = canvasWidth - paddingLeft - paddingRight;
+
+    // 用 canvas 测量文字并分行
+    var canvas = document.createElement('canvas');
+    var ctx = canvas.getContext('2d');
+    ctx.font = fontSize + 'px ' + fontFamily;
+
+    // 将文本按 \n 分段，再按可用宽度自动换行
+    var lines = [];
+    var rawLines = text.split('\n');
+    for (var ri = 0; ri < rawLines.length; ri++) {
+      var rawLine = rawLines[ri];
+      if (!rawLine) { lines.push(''); continue; }
+      var currentLine = '';
+      for (var ci = 0; ci < rawLine.length; ci++) {
+        var testLine = currentLine + rawLine[ci];
+        if (ctx.measureText(testLine).width > usableWidth && currentLine) {
+          lines.push(currentLine);
+          currentLine = rawLine[ci];
+        } else {
+          currentLine = testLine;
+        }
+      }
+      if (currentLine) lines.push(currentLine);
+    }
+    if (!lines.length) lines = [text];
+
+    var canvasHeight = paddingTop + lines.length * lineHeight + paddingBottom;
+    if (canvasHeight > maxHeight) canvasHeight = maxHeight;
+
+    // 绘制
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
+    ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+    ctx.font = fontSize + 'px ' + fontFamily;
+    ctx.fillStyle = color;
+    ctx.textAlign = textAlign === 'center' ? 'center'
+                  : (textAlign === 'right' ? 'right' : 'left');
+    var x = textAlign === 'center' ? canvasWidth / 2
+          : (textAlign === 'right' ? canvasWidth - paddingRight : paddingLeft);
+    var y = paddingTop + fontSize; // baseline
+
+    var maxLines = Math.floor((canvasHeight - paddingTop - paddingBottom) / lineHeight);
+    for (var li = 0; li < lines.length && li < maxLines; li++) {
+      ctx.fillText(lines[li], x, y);
+      y += lineHeight;
+    }
+
+    // 导出 base64
+    var base64;
+    try {
+      base64 = canvas.toDataURL('image/jpeg', quality);
+    } catch (e) {
+      failCount++;
+      return [];
+    }
+    canvas.width = canvas.height = 0; // 释放内存
+
+    if (!base64 || base64 === 'data:,') {
+      failCount++;
+      return [];
+    }
+
+    // 未配置上传地址时，直接返回 base64（仅用于本地调试）
+    if (!uploadUrl) {
+      return [{ url: base64, width: canvasWidth, height: canvasHeight }];
+    }
+
+    // 上传到图片空间
+    try {
+      var body = {};
+      for (var k in extraParams) {
+        if (extraParams.hasOwnProperty(k)) body[k] = extraParams[k];
+      }
+      body.title = 'desc_text_' + index;
+      body.img = base64;
+
+      var uploadRes = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+        body: JSON.stringify(body),
+        credentials: 'include'
+      });
+
+      if (uploadRes.ok) {
+        var res = await uploadRes.json();
+        var picUrl = parseResponse(res);
+        if (picUrl) {
+          return [{ url: picUrl, width: canvasWidth, height: canvasHeight }];
+        }
+      }
+    } catch (e) {}
+
+    failCount++;
+    return [];
+  };
+
+  return {
+    resolver: resolver,
+    getFailCount: function() { return failCount; }
+  };
+}
+
 // ==================== 导出 ====================
 
 export {
@@ -858,6 +1127,11 @@ export {
   buildRichTextModule,
   buildVersionModule,
   buildConfigModule,
+
+  // 内置解析器
+  loadImg,
+  createImageSizeResolver,
+  createTextImageResolver,
 
   // 内部工具
   extractImages,
