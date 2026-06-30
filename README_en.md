@@ -60,6 +60,8 @@ if (textImageHelper.getFailCount() > 0) {
 
 When text-to-image fails, resolver returns `[]` and the corresponding `text_N` module is automatically removed — submission is unaffected.
 
+> 📖 **Integration Guide**: [docs/integration-guide.md](./docs/integration-guide.md) — detailed integration steps, API adaptation, common issues and troubleshooting.
+
 ## API
 
 ### Core

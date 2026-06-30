@@ -60,6 +60,8 @@ if (textImageHelper.getFailCount() > 0) {
 
 合图失败时 resolver 返回 `[]`，对应 `text_N` 模块自动移除，不影响提交。
 
+> 📖 **实战对接指南**：[docs/integration-guide.md](./docs/integration-guide.md) — 详细的接入步骤、接口适配、常见问题与排错方案。
+
 ## API
 
 ### 核心
